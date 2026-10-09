@@ -1,0 +1,37 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: respicare-mosquitto
+    restart: unless-stopped
+
+    ports:
+      # Standard MQTT (plaintext) — exposed to localhost only for security
+      - "127.0.0.1:1883:1883"
+      # Uncomment to also expose TLS port when certs are configured:
+      # - "127.0.0.1:8883:8883"
+
+    volumes:
+      # Broker configuration
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+      # Persistent message storage (retained messages survive restarts)
+      - mosquitto_data:/mosquitto/data
+
+      # Log directory (optional; logs also go to stdout above)
+      - mosquitto_log:/mosquitto/log
+
+      # Uncomment and mount TLS certs when enabling TLS:
+      # - ./certs:/mosquitto/certs:ro
+
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mosquitto_data:
+    driver: local
+  mosquitto_log:
+    driver: local

@@ -1,0 +1,16 @@
+# RespiCare IoT Firmware Simulator
+# Core dependencies
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# MQTT
+paho-mqtt>=1.6.1
+
+# HTTP client (sync; matches firmware simplicity)
+httpx>=0.27.0
+
+# ---------------------------------------------------------------------------
+# Development / testing
+# ---------------------------------------------------------------------------
+pytest>=8.0.0
+pytest-mock>=3.12.0
