@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     mqtt_password: Optional[str] = Field(
         default=None, description="MQTT password (optional for local dev)."
     )
+    mqtt_ca_cert: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Path to the CA certificate used to verify a TLS MQTT broker. "
+            "When unset, MQTT uses a plain TCP connection."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Simulator behaviour

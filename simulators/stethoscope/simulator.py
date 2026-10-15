@@ -28,11 +28,15 @@ import logging
 import signal
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
+from pydantic import ValidationError
+
 from common.config import settings
 from common.models import (
+    AssignVisitCommand,
     RecordingStartedEvent,
     RecordingStoppedEvent,
     VisitAssignedEvent,
@@ -60,6 +64,7 @@ class StethoscopeSimulator:
     def __init__(self, wav_path: Path) -> None:
         self._wav_path = wav_path
         self._current_visit_id: Optional[str] = None
+        self._processed_command_ids: set[str] = set()
         self._running = False
 
         device_id = settings.stethoscope_device_id
@@ -125,19 +130,50 @@ class StethoscopeSimulator:
     # ------------------------------------------------------------------
 
     def _handle_command(self, topic: str, payload: dict) -> None:
-        """Dispatch incoming MQTT commands."""
-        cmd_type = payload.get("type")
+        """Accept a valid ASSIGN_VISIT command exactly once."""
+        if payload.get("type") != "ASSIGN_VISIT":
+            logger.warning("Unknown command type '%s' – ignoring.", payload.get("type"))
+            return
 
-        if cmd_type == "ASSIGN_VISIT":
-            visit_id = payload.get("visitId") or payload.get("visit_id")
-            if not visit_id:
-                logger.warning("ASSIGN_VISIT command missing visitId – ignoring.")
-                return
-            logger.info("Received ASSIGN_VISIT for visit %s", visit_id)
-            self._current_visit_id = visit_id
-            self._simulate_recording(visit_id)
-        else:
-            logger.warning("Unknown command type '%s' – ignoring.", cmd_type)
+        # These fields are mandatory on the wire. Check presence before model
+        # validation because BaseMessage otherwise generates a messageId default.
+        visit_id = payload.get("visitId")
+        message_id = payload.get("messageId")
+        if not isinstance(visit_id, str) or not isinstance(message_id, str):
+            logger.warning("ASSIGN_VISIT missing string visitId or messageId – ignoring.")
+            return
+
+        try:
+            command = AssignVisitCommand.model_validate(payload)
+            self._validate_uuid(command.visit_id, "visitId")
+            self._validate_uuid(command.message_id, "messageId")
+        except (ValidationError, ValueError) as exc:
+            logger.warning("Invalid ASSIGN_VISIT command – ignoring: %s", exc)
+            return
+
+        if command.message_id in self._processed_command_ids:
+            logger.info("Ignoring duplicate ASSIGN_VISIT messageId=%s", command.message_id)
+            return
+
+        # Record the ID before running the synchronous simulation so QoS-1
+        # redelivery cannot start a second upload for the same command.
+        self._processed_command_ids.add(command.message_id)
+        self._current_visit_id = command.visit_id
+        logger.info(
+            "Received ASSIGN_VISIT messageId=%s for visit %s",
+            command.message_id,
+            command.visit_id,
+        )
+        self._simulate_recording(command.visit_id)
+
+    @staticmethod
+    def _validate_uuid(value: Optional[str], field_name: str) -> None:
+        """Validate protocol UUID fields, which are required to be UUID v4."""
+        if not value:
+            raise ValueError(f"{field_name} is required")
+        parsed = uuid.UUID(value)
+        if parsed.version != 4:
+            raise ValueError(f"{field_name} must be a UUID v4")
 
     def _simulate_recording(self, visit_id: str) -> None:
         """

@@ -3,6 +3,7 @@ Shared MQTT client wrapper built on top of paho-mqtt.
 
 Handles:
 - Connection with optional username/password
+- TLS with an optional private CA certificate
 - Configurable Last Will message
 - QoS-1 publish helpers
 - Retained message publish for status
@@ -49,6 +50,7 @@ class MqttClient:
         port: Optional[int] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        ca_cert: Optional[str] = None,
         on_command: Optional[Callable[[str, dict], None]] = None,
     ) -> None:
         self.device_id = device_id
@@ -56,6 +58,9 @@ class MqttClient:
         self._port = port or settings.mqtt_port
         self._username = username or settings.mqtt_username
         self._password = password or settings.mqtt_password
+        self._ca_cert = ca_cert or (
+            str(settings.mqtt_ca_cert) if settings.mqtt_ca_cert else None
+        )
         self._on_command = on_command
 
         self._client = mqtt.Client(
@@ -83,6 +88,12 @@ class MqttClient:
         if self._username:
             self._client.username_pw_set(self._username, self._password)
 
+        if self._ca_cert:
+            # paho-mqtt verifies the server certificate and hostname by default.
+            # Do not call tls_insecure_set(True): private-CA production brokers
+            # must be authenticated just like public-CA brokers.
+            self._client.tls_set(ca_certs=self._ca_cert)
+
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
@@ -94,10 +105,11 @@ class MqttClient:
     def connect(self, timeout: float = 10.0) -> None:
         """Connect to the MQTT broker and block until connected (or timeout)."""
         logger.info(
-            "Connecting to MQTT broker %s:%s as device %s",
+            "Connecting to MQTT broker %s:%s as device %s (TLS=%s)",
             self._host,
             self._port,
             self.device_id,
+            bool(self._ca_cert),
         )
         self._client.connect(self._host, self._port, keepalive=60)
         self._client.loop_start()

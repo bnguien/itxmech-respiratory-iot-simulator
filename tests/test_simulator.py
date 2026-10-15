@@ -183,7 +183,48 @@ class TestMessageIdGeneration:
 
 
 # ===========================================================================
-# 3. MQTT topic generation
+# 3. Stethoscope MQTT ASSIGN_VISIT handling
+# ===========================================================================
+
+
+class TestStethoscopeAssignVisit:
+    def test_valid_assign_visit_runs_once_and_uses_command_visit_id(
+        self, tmp_path: Path
+    ) -> None:
+        from simulators.stethoscope.simulator import StethoscopeSimulator
+
+        simulator = StethoscopeSimulator(write_wav(tmp_path))
+        simulator._simulate_recording = MagicMock()  # type: ignore[method-assign]
+        command = {
+            "version": 1,
+            "type": "ASSIGN_VISIT",
+            "messageId": str(uuid.uuid4()),
+            "visitId": str(uuid.uuid4()),
+            "timestamp": "2026-10-08T15:30:00.000Z",
+        }
+
+        simulator._handle_command("respicare/device/RESPICARE-STETH-001/command", command)
+        simulator._handle_command("respicare/device/RESPICARE-STETH-001/command", command)
+
+        simulator._simulate_recording.assert_called_once_with(command["visitId"])
+        assert simulator._current_visit_id == command["visitId"]
+
+    def test_invalid_assign_visit_is_ignored(self, tmp_path: Path) -> None:
+        from simulators.stethoscope.simulator import StethoscopeSimulator
+
+        simulator = StethoscopeSimulator(write_wav(tmp_path))
+        simulator._simulate_recording = MagicMock()  # type: ignore[method-assign]
+
+        simulator._handle_command(
+            "respicare/device/RESPICARE-STETH-001/command",
+            {"type": "ASSIGN_VISIT", "visitId": str(uuid.uuid4())},
+        )
+
+        simulator._simulate_recording.assert_not_called()
+
+
+# ===========================================================================
+# 4. MQTT topic generation
 # ===========================================================================
 
 
@@ -208,7 +249,45 @@ class TestMqttTopicGeneration:
 
 
 # ===========================================================================
-# 4. WAV metadata validation
+# 5. MQTT TLS configuration
+# ===========================================================================
+
+
+class TestMqttTlsConfiguration:
+    def test_settings_accepts_mqtt_ca_cert(self) -> None:
+        from common.config import Settings
+
+        configured = Settings(mqtt_ca_cert="/tmp/respicare-mqtt-ca.crt")
+
+        assert configured.mqtt_ca_cert == Path("/tmp/respicare-mqtt-ca.crt")
+
+    @patch("common.mqtt_client.mqtt.Client")
+    def test_private_ca_enables_verified_tls(self, mock_client_cls: MagicMock) -> None:
+        from common.mqtt_client import MqttClient
+
+        MqttClient(
+            device_id="RESPICARE-STETH-001",
+            ca_cert="/tmp/respicare-mqtt-ca.crt",
+        )
+
+        mqtt_client = mock_client_cls.return_value
+        mqtt_client.tls_set.assert_called_once_with(
+            ca_certs="/tmp/respicare-mqtt-ca.crt"
+        )
+        mqtt_client.tls_insecure_set.assert_not_called()
+
+    @patch("common.mqtt_client.mqtt.Client")
+    def test_no_ca_keeps_plain_local_mqtt(self, mock_client_cls: MagicMock) -> None:
+        from common.mqtt_client import MqttClient
+
+        with patch("common.mqtt_client.settings.mqtt_ca_cert", None):
+            MqttClient(device_id="RESPICARE-STETH-001")
+
+        mock_client_cls.return_value.tls_set.assert_not_called()
+
+
+# ===========================================================================
+# 6. WAV metadata validation
 # ===========================================================================
 
 
